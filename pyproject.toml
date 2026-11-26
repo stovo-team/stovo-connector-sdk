@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "stovo-connector-sdk"
+version = "0.1.0"
+description = "SDK for building standalone external data connectors for Stovo Insight"
+readme = "README.md"
+authors = [{ name = "Stovo Team", email = "dev@stovo.team" }]
+license = "Apache-2.0"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.5.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "httpx>=0.25.0",
+    "click>=8.1.0",
+]
+
+[project.scripts]
+stovo-connector = "stovo_connector_sdk.cli:cli"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "mypy>=1.8.0",
+]
