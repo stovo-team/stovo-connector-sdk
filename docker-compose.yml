@@ -1,8 +1,10 @@
 services:
-  connector:
+  connectors-host:
     build: .
     ports:
       - "${CONNECTOR_PORT:-8080}:8080"
+    volumes:
+      - ./examples:/connectors:ro
     environment:
       - CONNECTOR_HOST=0.0.0.0
       - CONNECTOR_PORT=8080

@@ -1,166 +1,164 @@
-# Stovo Connector Template & SDK
+# Stovo Connector SDK & Multi-Connector Host
 
 [![CI](https://github.com/stovo-team/stovo-connector-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/stovo-team/stovo-connector-sdk/actions/workflows/ci.yml)
 [![Template](https://img.shields.io/badge/GitHub-Template_Repository-blue.svg)](https://github.com/stovo-team/stovo-connector-sdk/generate)
 
-Starter template repository and Python SDK for building **out-of-process data source connectors** (Jira, Notion, Slack, Google Drive, Confluence, GitLab, etc.) for **Stovo Insight**.
+Python SDK and multi-tenant host runner for building **out-of-process data source connectors** (Jira, Notion, Slack, Google Drive, Confluence, GitLab, etc.) for **Stovo Insight**.
 
-Connectors built with this template run as independent microservices and connect to an already-running Stovo Insight instance over standard HTTP/JSON — **no modifications to Stovo Insight core required**.
-
----
-
-## How It Works
-
-```
-   ┌────────────────────────────────┐                    ┌────────────────────────────────┐
-   │        Stovo Insight           │                    │     Your Custom Connector      │
-   │         (Core RAG)             │                    │     (Built from Template)      │
-   │                                │                    │                                │
-   │  ┌──────────────────────────┐  │    1. Backfill     │  ┌──────────────────────────┐  │
-   │  │   RemoteSourceAdapter    │──┼───────────────────>│  │ GET  /backfill/begin     │  │
-   │  └──────────────────────────┘  │    2. Incremental  │  │ GET  /events             │  │
-   │                                │                    │  └──────────────────────────┘  │
-   │                                │    3. Live Access  │  ┌──────────────────────────┐  │
-   │                                │───────────────────>│  │ POST /authorization:check│  │
-   │                                │     (on search)    │  └──────────────────────────┘  │
-   └────────────────────────────────┘                    └────────────────────────────────┘
-```
-
-1. **Standalone Microservice**: Deploy anywhere (Docker container, Kubernetes pod, or serverless VM).
-2. **Source-Authoritative Security**: Stovo Insight never stores third-party ACL matrices. When a user runs a search query, Insight asks your connector (`POST /authorization:check`) in real time to verify whether the user is allowed to read the cited resources.
-3. **Point-in-Time Provenance**: Every document revision carries container identifiers and observation timestamps for grounded answers.
+Connectors connect to an already-running Stovo Insight instance over standard HTTP/JSON or Unix Domain Sockets — **no modifications or recompilation of Stovo Insight core required**.
 
 ---
 
-## Getting Started
+## Key Features
 
-### 1. Create your repository from this template
+1. **Multi-Connector Host (Zero Container Bloat)**:
+   Host 10–50 connectors in a **single lightweight process/container** (~50MB RAM). No heavy Docker container per connector.
+2. **Zero Core Recompilation**:
+   Connectors are standalone modules. You can add or update connectors dynamically without touching the Rust worker or core indexing engine.
+3. **Unix Domain Socket (UDS) & HTTP Support**:
+   Connectors can run over local Unix sockets (`/var/run/stovo/connectors.sock`) for near-zero latency and zero open network ports, or standard HTTP.
+4. **Source-Authoritative Real-Time Authorization**:
+   Stovo Insight asks your connector (`POST /authorization:check`) in real time (2–5ms) on search queries.
 
-Click the green **[Use this template](https://github.com/stovo-team/stovo-connector-sdk/generate)** button on GitHub, or clone locally:
+---
 
-```bash
-git clone https://github.com/stovo-team/stovo-connector-sdk.git my-jira-connector
-cd my-jira-connector
+## Architecture
+
+```
+   ┌────────────────────────────────┐                    ┌──────────────────────────────────────────┐
+   │        Stovo Insight           │                    │         Stovo Connector Host             │
+   │         (Core Engine)          │                    │     (Single Process / ~50MB RAM)         │
+   │                                │                    │                                          │
+   │  ┌──────────────────────────┐  │   HTTP or UDS      │  ┌────────────────────────────────────┐  │
+   │  │   RemoteSourceAdapter    │──┼───────────────────>│  │ Multi-Connector ASGI Router        │  │
+   │  └──────────────────────────┘  │                    │  └──────┬──────────────┬──────────────┘  │
+   │                                │                    │         │              │                 │
+   │                                │                    │  ┌──────▼──────┐┌──────▼──────┐          │
+   │                                │                    │  │ JiraConnector││NotionConnector│ ...   │
+   │                                │                    │  └─────────────┘└─────────────┘          │
+   └────────────────────────────────┘                    └──────────────────────────────────────────┘
 ```
 
-### 2. Set up environment
+---
+
+## Quick Start: Creating a New Connector
+
+### 1. Scaffold a project in 2 seconds
 
 ```bash
-# Create virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
-
-# Install dependencies
-pip install -e ".[dev]"
-
-# Copy environment configuration
-cp .env.example .env
+pip install stovo-connector-sdk
+stovo-connector init jira
 ```
 
-### 3. Implement your connector logic in `connector.py`
+This generates:
+```text
+stovo-connector-jira/
+├── connector.py           # Core implementation inheriting BaseConnector
+├── pyproject.toml         # Packaging & entry point registration
+├── README.md
+└── tests/
+    └── test_connector.py  # Unit tests
+```
 
-Open [`connector.py`](connector.py) and fill in the methods for your target system:
+### 2. Implement your connector logic in `connector.py`
 
-| Method to implement | Description |
-|---|---|
-| `get_scopes()` | Return active `(tenant_id, connection_id)` pairs served by this connector. |
-| `begin_backfill()` | Fetch the first page of historical documents/messages and return snapshots + cursor. |
-| `continue_backfill()` | Fetch subsequent pages of historical data using opaque cursors until `cursor is None`. |
-| `list_events()` | Stream incremental change events (`CREATE`, `UPDATE`, `DELETE`, `ACL_CHANGE`). |
-| `get_snapshot()` | Fetch the exact content and metadata for a specific document revision. |
-| `bulk_authorize()` | Verify in real time whether `principal_id` has access to each resource ID. |
-| `resolve_citation()` | Return deep-link URLs and titles for cited resources in chat answers. |
+```python
+from stovo_connector_sdk import BaseConnector, ScopeItem, BackfillResponse, EventsResponse, ResourceSnapshot
 
-### 4. Run the connector locally
+class JiraConnector(BaseConnector):
+    kind = "jira"
+
+    async def get_scopes(self) -> list[tuple[str, str]]:
+        return [("workspace-acme", "conn-jira-prod")]
+
+    async def begin_backfill(self, tenant_id: str, connection_id: str, *, page_size: int = 100) -> BackfillResponse:
+        ...
+
+    async def list_events(self, cursor: str, *, limit: int = 100, **kwargs) -> EventsResponse:
+        ...
+
+    async def bulk_authorize(self, principal_id: str, operation, resource_ids, **kwargs):
+        ...
+```
+
+---
+
+## Running with the Multi-Connector Host
+
+### Option A: Via CLI (Local / Development)
+
+Place your connector modules in a `./connectors` folder:
 
 ```bash
-python main.py
+# Scan directory and host all connectors on HTTP
+stovo-connector host --dir ./connectors --port 8080 --token my-secret
+
+# Or run over a Unix Domain Socket (zero open ports)
+stovo-connector host --dir ./connectors --uds /var/run/stovo/connectors.sock --token my-secret
 ```
 
-The service will start on `http://0.0.0.0:8080`.
+Each connector is automatically mounted at `/connectors/{kind}/*`:
+- `GET  /connectors/jira/scopes`
+- `GET  /connectors/jira/backfill/begin`
+- `POST /connectors/jira/authorization:check`
+
+Clients sending `X-Connector-Kind: jira` can also query the root endpoints directly.
+
+### Option B: Via Docker Compose (Single Container)
+
+```yaml
+services:
+  connectors-host:
+    image: stovo-connector-host:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./connectors:/connectors:ro
+    environment:
+      - CONNECTOR_AUTH_TOKEN=my-secret
+    restart: unless-stopped
+```
 
 ---
 
 ## Validating with the SDK CLI
 
-Before connecting to a live Stovo Insight instance, test your connector against the full protocol conformance test suite:
+Before connecting to Stovo Insight, validate your connector against the protocol suite:
 
 ```bash
-stovo-connector test http://localhost:8080 --token test-secret
+stovo-connector test http://localhost:8080/connectors/jira --token my-secret
 ```
 
 Output:
 ```text
-Validating connector at: http://localhost:8080
+Validating connector at: http://localhost:8080/connectors/jira
 
   [PASS] GET /scopes (1 scopes discovered)
   [PASS] GET /backfill/begin (1 snapshots returned)
-  [PASS] GET /events 
-  [PASS] GET /resources/sample-item-1/snapshot 
-  [PASS] POST /authorization:check 
-  [PASS] POST /citations:resolve 
+  [PASS] GET /events
+  [PASS] GET /resources/sample-1/snapshot
+  [PASS] POST /authorization:check
+  [PASS] POST /citations:resolve
 
 Summary: 6 passed, 0 failed
 ```
 
 ---
 
-## Production Deployment
-
-### Using Docker Compose
-
-```bash
-# Build and run container in background
-docker compose up -d
-```
-
-### Dockerfile
-
-A production-ready minimal container image is provided in [`Dockerfile`](Dockerfile). Build with:
-
-```bash
-docker build -t my-custom-connector .
-docker run -p 8080:8080 -e CONNECTOR_AUTH_TOKEN="my-secret" my-custom-connector
-```
-
----
-
 ## Connecting to Stovo Insight
 
-Once your connector is running:
-
-1. Open Stovo Insight Admin Console or call the Connections API:
-   - **Connector Type**: `custom` (or your registered `ConnectorKind`)
-   - **Endpoint URL**: `http://my-connector-host:8080` (or `https://...`)
-   - **Bearer Token**: `my-shared-secret`
-2. Stovo Insight's `RemoteSourceAdapter` will immediately:
-   - Discover scopes via `GET /scopes`
-   - Ingest historical data via `GET /backfill/begin`
-   - Stream real-time changes via `GET /events`
-   - Validate live user permissions via `POST /authorization:check` on every search query.
+In Stovo Insight:
+- **Connector Type**: `custom` (or `RemoteSourceAdapter`)
+- **Endpoint URL**: `http://connectors-host:8080/connectors/jira` (or `unix:///var/run/stovo/connectors.sock`)
+- **Bearer Token**: `my-secret`
 
 ---
 
-## Protocol Specification
+## Automated Tests
 
-Your connector service implements these HTTP/JSON endpoints:
-
-| Endpoint | Method | Headers | Description |
-|---|---|---|---|
-| `/scopes` | `GET` | `Authorization: Bearer <token>` | Discovers active tenant and connection scopes. |
-| `/backfill/begin` | `GET` | `X-Tenant-ID`, `X-Connection-ID` | Starts historical snapshot backfill. |
-| `/backfill/continue` | `GET` | `X-Tenant-ID`, `X-Connection-ID` | Continues backfill via `?cursor=...`. |
-| `/events` | `GET` | `X-Tenant-ID`, `X-Connection-ID` | Polls incremental change stream via `?cursor=...`. |
-| `/resources/{id}/snapshot` | `GET` | `X-Tenant-ID`, `X-Connection-ID` | Fetches exact content for revision `?revision_id=...`. |
-| `/authorization:check` | `POST` | `X-Tenant-ID`, `X-Connection-ID` | Checks real-time ACL permissions for a principal. |
-| `/citations:resolve` | `POST` | `X-Tenant-ID`, `X-Connection-ID` | Resolves text offset locators to source URLs. |
-
----
-
-## Running Automated Tests
-
+Run test suite:
 ```bash
-PYTHONPATH=src:. pytest tests/
+pytest
 ```
 
 ---
