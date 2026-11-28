@@ -4,6 +4,7 @@ Build custom data connectors for Stovo Insight.
 """
 
 from .base import BaseConnector
+from .discovery import discover_connectors
 from .models import (
     AuthorizationDecision,
     AuthorizationOperation,
@@ -16,11 +17,14 @@ from .models import (
     SourceEventKind,
     TextLocator,
 )
-from .server import create_connector_app
+from .server import create_connector_app, create_connector_router, create_multi_connector_app
 
 __all__ = [
     "BaseConnector",
     "create_connector_app",
+    "create_connector_router",
+    "create_multi_connector_app",
+    "discover_connectors",
     "ResourceSnapshot",
     "SourceEvent",
     "SourceEventKind",

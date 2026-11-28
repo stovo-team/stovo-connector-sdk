@@ -7,10 +7,12 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
-COPY connector.py main.py ./
 
 RUN pip install --no-cache-dir .
 
+# Create directory for mounted connector plugins
+RUN mkdir -p /connectors
+
 EXPOSE 8080
 
-CMD ["python", "main.py"]
+CMD ["stovo-connector", "host", "--dir", "/connectors", "--host", "0.0.0.0", "--port", "8080"]

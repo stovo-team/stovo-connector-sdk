@@ -20,6 +20,16 @@ from .models import (
 class BaseConnector(ABC):
     """Abstract base class for building an external data source connector for Stovo Insight."""
 
+    kind: str = ""
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if not getattr(cls, "kind", None):
+            name = cls.__name__.lower()
+            if name.endswith("connector") and len(name) > 9:
+                name = name[:-9]
+            cls.kind = name
+
     @abstractmethod
     async def get_scopes(self) -> list[tuple[str, str]]:
         """Return the active (tenant_id, connection_id) pairs this connector serves."""
